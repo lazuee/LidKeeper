@@ -11,6 +11,13 @@
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
-	<true/>
+	<dict>
+		<!-- Restart after a crash, but not after a deliberate Quit. -->
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<!-- Back off instead of hot-looping if the app dies on launch. -->
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
 </dict>
 </plist>

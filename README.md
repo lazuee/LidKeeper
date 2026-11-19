@@ -21,13 +21,19 @@ display that reuses the identity of a recently destroyed one. Disabling clears
 the display's modes and releases the reference `init` hands back, so the entry
 disappears from System Settings → Displays instead of accumulating.
 
-## Planned, not yet implemented
+## How this differs from `caffeinate`
 
-- Reaching parity with the `caffeinate` flags `-i -m -s`: only idle system sleep
-  is currently asserted; disk sleep (`-m`) and system sleep (`-s`) are covered
-  purely by clamshell mode.
-- A periodic `pmset displaysleepnow` tick to force the screen off. Today the
-  screen goes off because clamshell mode does it, not because anything polls.
+`caffeinate -i -m -s` asserts three things separately. LidKeeper asserts only
+idle system sleep, and lets clamshell mode cover the rest — that is what keeps
+the screen off while the machine stays up.
+
+- Nothing polls `pmset displaysleepnow`; the screen goes off because clamshell
+  mode blanks it, not because a timer forces it.
+- Disk sleep (`-m`) and system sleep (`-s`) are not asserted individually.
+
+Both are deliberate rather than missing: in testing, a closed lid held a live
+WiFi link for several minutes while `pmset` reported sleep continuously
+prevented for the whole run.
 
 ## Requirements
 
@@ -45,20 +51,35 @@ This compiles the Swift source, creates `LidKeeper.app` in `/Applications`, and 
 
 ## Launch at Boot (optional)
 
+The bundled `com.lidkeeper.plist` restarts LidKeeper if it crashes, but stays
+down after a deliberate Quit. It throttles restarts by 10s so a crash on start
+cannot hot-loop. Anything in `~/Library/LaunchAgents` is loaded again at login,
+so this also covers boot.
+
 ```bash
+mkdir -p ~/Library/LaunchAgents
 cp com.lidkeeper.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.lidkeeper.plist
 ```
 
-Or add `/Applications/LidKeeper.app` to Login Items in System Settings → General → Login Items.
+To stop managing it that way again:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.lidkeeper.plist
+rm ~/Library/LaunchAgents/com.lidkeeper.plist
+```
+
+Or skip launchd entirely and add `/Applications/LidKeeper.app` to Login Items in
+System Settings → General → Login Items.
 
 ## Usage
 
-- **Green circle** in the menu bar = active. Close the lid and the display will turn off while the system keeps running.
-- **Gray circle** = disabled. Normal macOS sleep behavior.
-- Right-click the icon to toggle on/off or quit.
+- **Green `LK`** in the menu bar = active. Close the lid and the display will turn off while the system keeps running.
+- **Grey `LK`** = disabled. Normal macOS sleep behavior.
+- Click the icon to toggle on/off or quit.
 
-When active, `pmset displaysleep` is set to `0` (never). When disabled, it restores to `30` minutes.
+LidKeeper never calls `pmset`; all of the above runs through CoreGraphics and
+Power Management APIs, so your `pmset` display-sleep setting is left alone.
 
 ## License
 
