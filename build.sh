@@ -16,7 +16,7 @@ swiftc \
     -module-name LidKeeper \
     -framework Cocoa \
     -framework CoreGraphics \
-    -framework IOKit \
+    -import-objc-header "$SCRIPT_DIR/Sources/pm_helper.h" \
     "$SRC_SWIFT" \
     "$SRC_C"
 

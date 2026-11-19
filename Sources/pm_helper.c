@@ -2,6 +2,7 @@
 #include <IOKit/pwr_mgt/IOPMLib.h>
 
 uint32_t pm_no_idle_sleep(const char *reason) {
+    if (!reason) return 0;
     IOPMAssertionID assertionID = 0;
     CFStringRef reasonStr = CFStringCreateWithCString(
         kCFAllocatorDefault, reason, kCFStringEncodingUTF8);

@@ -2,7 +2,32 @@
 
 Keep your Mac running with the lid closed — screen off, system on.
 
-The opposite of [Amphetamine](https://apps.apple.com/app/amphetamine/id937984704): system sleep is blocked (`-i -m -s`) but display sleep is still allowed. When the lid closes, `pmset displaysleepnow` fires every second to force the screen off while the system stays awake.
+The opposite of [Amphetamine](https://apps.apple.com/app/amphetamine/id937984704): the system keeps running while the display is allowed to turn off.
+
+## How it works
+
+LidKeeper attaches a private `CGVirtualDisplay` and mirrors it to the built-in
+display. macOS treats that as an external monitor and enters native clamshell
+mode, so closing the lid turns the screen off instead of forcing a sleep.
+
+Alongside the display it holds an `IOPMAssertionTypeNoIdleSleep` assertion so
+macOS does not power down the WiFi/network hardware when the lid magnet sensor
+trips. If the assertion cannot be acquired, the menu bar reports
+`⚠️ Display active, sleep assertion failed` and retries periodically while the
+display is on.
+
+Each enable gets a fresh virtual display serial, because macOS refuses a new
+display that reuses the identity of a recently destroyed one. Disabling clears
+the display's modes and releases the reference `init` hands back, so the entry
+disappears from System Settings → Displays instead of accumulating.
+
+## Planned, not yet implemented
+
+- Reaching parity with the `caffeinate` flags `-i -m -s`: only idle system sleep
+  is currently asserted; disk sleep (`-m`) and system sleep (`-s`) are covered
+  purely by clamshell mode.
+- A periodic `pmset displaysleepnow` tick to force the screen off. Today the
+  screen goes off because clamshell mode does it, not because anything polls.
 
 ## Requirements
 

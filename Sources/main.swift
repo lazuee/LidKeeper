@@ -1,12 +1,10 @@
 import Cocoa
 import CoreGraphics
 
-// MARK: - C bridge: Power Management assertions
-@_silgen_name("pm_no_idle_sleep")
-func pm_no_idle_sleep(_ reason: UnsafePointer<CChar>) -> UInt32
-
-@_silgen_name("pm_release_assertion")
-func pm_release_assertion(_ id: UInt32) -> Int32
+// Power Management assertions are declared in pm_helper.h, which build.sh
+// feeds to swiftc via -import-objc-header. That keeps the Swift call sites and
+// the C prototypes in a single source of truth instead of duplicating the
+// symbols (and their return types) in @_silgen_name declarations.
 
 // MARK: - Virtual Display Manager via ObjC Runtime
 // CGVirtualDisplay, CGVirtualDisplayDescriptor, CGVirtualDisplaySettings
@@ -95,7 +93,7 @@ class VirtualDisplayManager {
         // returns +1. Leaving that reference unclaimed meant a destroyed
         // display was never deallocated, so it stayed registered with the
         // window server and every toggle added a "LidKeeper (n)" entry to
-        // System Settings -> Displays.
+        // System Settings → Displays.
         guard let vd = allocated.perform(initSel, with: desc)?
             .takeRetainedValue() as? NSObject
         else {
@@ -116,16 +114,24 @@ class VirtualDisplayManager {
         display = vd
         NSLog("[LidKeeper] Virtual display created")
 
-        // Mirror to main after a short delay (needs display to settle)
+        // Mirror to main after a short delay (needs display to settle).
+        // Capture this exact display object: if the user toggles off/on within
+        // the delay, a newer `create()` supersedes us and `self.display` no
+        // longer refers to `vd`, so the stale closure must not run.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            guard let id = self?.displayID else { return }
-            var config: CGDisplayConfigRef?
-            guard CGBeginDisplayConfiguration(&config) == .success, let cfg = config else { return }
-            CGConfigureDisplayMirrorOfDisplay(cfg, id, CGMainDisplayID())
-            CGCompleteDisplayConfiguration(cfg, .forSession)
+            guard let self, let current = self.display, current === vd else { return }
+            self.mirrorToMain(vd)
         }
 
         return true
+    }
+
+    private func mirrorToMain(_ obj: NSObject) {
+        guard let id = displayID else { return }
+        var config: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&config) == .success, let cfg = config else { return }
+        CGConfigureDisplayMirrorOfDisplay(cfg, id, CGMainDisplayID())
+        CGCompleteDisplayConfiguration(cfg, .forSession)
     }
 
     func destroy() {
@@ -138,7 +144,7 @@ class VirtualDisplayManager {
                 CGCompleteDisplayConfiguration(cfg, .forSession)
             }
             // Clear the modes so the window server stops tracking it, so the
-            // entry leaves System Settings -> Displays rather than lingering.
+            // entry leaves System Settings → Displays rather than lingering.
             if let settingsClass = objcClass("CGVirtualDisplaySettings"),
                let settings = settingsClass.perform(NSSelectorFromString("new"))?
                    .takeUnretainedValue() as! NSObject?
@@ -170,6 +176,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     private let vdm = VirtualDisplayManager()
     private var pmAssertionID: UInt32 = 0
+    private let pmAssertionTimeout: TimeInterval = 15
+    private var pmRetryTimer: Timer?
     private var statusMenuItem: NSMenuItem!
     private var toggleMenuItem: NSMenuItem!
 
@@ -204,7 +212,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .foregroundColor: color
         ]
         statusItem.button?.attributedTitle = NSAttributedString(string: "LK", attributes: attrs)
-        statusMenuItem.title = isEnabled ? "✅ Virtual Display Active" : "⛔ Disabled"
+        if !isEnabled {
+            statusMenuItem.title = "⛔ Disabled"
+        } else if pmAssertionID == 0 {
+            statusMenuItem.title = "⚠️ Display active, sleep assertion failed"
+        } else {
+            statusMenuItem.title = "✅ Virtual Display Active"
+        }
         toggleMenuItem.title = isEnabled ? "Turn Off" : "Turn On"
     }
 
@@ -217,22 +231,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.terminate(nil)
     }
 
+    /// Acquires the NoIdleSleep assertion, retrying while the display stays up.
+    /// A failure here is not cosmetic: without the assertion the network stack
+    /// is allowed to sleep on lid close, which is the entire point of the app.
+    private func acquireAssertion() {
+        guard isEnabled, pmAssertionID == 0 else { return }
+        let id = "LidKeeper active".withCString { pm_no_idle_sleep($0) }
+        if id != 0 {
+            pmAssertionID = id
+            NSLog("[LidKeeper] NoIdleSleep assertion created: \(id)")
+            stopRetrying()
+        } else {
+            NSLog("[LidKeeper] WARNING: NoIdleSleep assertion failed; retrying in \(pmAssertionTimeout)s")
+            scheduleRetry()
+        }
+        refreshMenuBar()
+    }
+
+    private func scheduleRetry() {
+        guard pmRetryTimer == nil else { return }
+        pmRetryTimer = Timer.scheduledTimer(withTimeInterval: pmAssertionTimeout, repeats: true) { [weak self] _ in
+            self?.acquireAssertion()
+        }
+    }
+
+    private func stopRetrying() {
+        pmRetryTimer?.invalidate()
+        pmRetryTimer = nil
+    }
+
     private func enable() {
         guard vdm.create() else {
             showAlert("Error", "Failed to create virtual display.\nThis app requires macOS 14+ with CGVirtualDisplay support.")
             return
         }
-        // Keep WiFi/network subsystems awake when lid closes
-        pmAssertionID = "LidKeeper active".withCString { pm_no_idle_sleep($0) }
-        if pmAssertionID != 0 {
-            NSLog("[LidKeeper] NoIdleSleep assertion created: \(pmAssertionID)")
-        } else {
-            NSLog("[LidKeeper] WARNING: NoIdleSleep assertion failed")
-        }
         isEnabled = true
+        acquireAssertion()
     }
 
     private func disable() {
+        stopRetrying()
         if pmAssertionID != 0 {
             let ret = pm_release_assertion(pmAssertionID)
             NSLog("[LidKeeper] NoIdleSleep assertion released: \(ret == 0 ? "OK" : "FAIL")")

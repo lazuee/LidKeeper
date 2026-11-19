@@ -4,7 +4,8 @@
 #include <stdint.h>
 
 // Creates a kIOPMAssertionTypeNoIdleSleep assertion.
-// Returns assertion ID on success (> 0), 0 on failure.
+// Returns assertion ID on success (> 0), 0 on failure or invalid argument.
+// `reason` must be non-NULL.
 uint32_t pm_no_idle_sleep(const char *reason);
 
 // Releases a power management assertion.
