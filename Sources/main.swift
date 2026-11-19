@@ -40,6 +40,7 @@ private func objcSize(_ obj: NSObject, _ sel: String, _ val: CGSize) {
 class VirtualDisplayManager {
     private var display: NSObject?
     private let queue = DispatchQueue(label: "com.lidkeeper.vd", qos: .userInteractive)
+    private var nextSerial: UInt32 = 1
 
     var isActive: Bool { display != nil }
 
@@ -73,7 +74,12 @@ class VirtualDisplayManager {
         objcSize(desc, "setSizeInMillimeters:", CGSize(width: 530, height: 300))
         objcUInt32(desc, "setVendorID:", 0x1337)
         objcUInt32(desc, "setProductID:", 0x0001)
-        objcUInt32(desc, "setSerialNum:", 0x0001)
+        // macOS keys virtual displays by vendor+product+serial. The previous
+        // display can still be registered at the moment the next one is
+        // created, and a duplicate identity is rejected, so hand out a new
+        // serial per create().
+        objcUInt32(desc, "setSerialNum:", nextSerial)
+        nextSerial += 1
         objcCall(desc, "setDispatchQueue:", queue)
 
         // Create virtual display
@@ -85,8 +91,13 @@ class VirtualDisplayManager {
 
         let allocated = displayClass.perform(NSSelectorFromString("alloc"))?
             .takeUnretainedValue() as! NSObject
+        // takeRetainedValue, not takeUnretainedValue: `initWithDescriptor:`
+        // returns +1. Leaving that reference unclaimed meant a destroyed
+        // display was never deallocated, so it stayed registered with the
+        // window server and every toggle added a "LidKeeper (n)" entry to
+        // System Settings -> Displays.
         guard let vd = allocated.perform(initSel, with: desc)?
-            .takeUnretainedValue() as? NSObject
+            .takeRetainedValue() as? NSObject
         else {
             NSLog("[LidKeeper] CGVirtualDisplay init failed")
             return false
@@ -118,11 +129,22 @@ class VirtualDisplayManager {
     }
 
     func destroy() {
-        if let id = displayID {
+        if let d = display, let id = displayID {
+            // Un-mirror first: while mirrored the display is inactive, so CG has
+            // to stop using it as a mirror target before it can be torn down.
             var config: CGDisplayConfigRef?
             if CGBeginDisplayConfiguration(&config) == .success, let cfg = config {
                 CGConfigureDisplayMirrorOfDisplay(cfg, id, kCGNullDirectDisplay)
                 CGCompleteDisplayConfiguration(cfg, .forSession)
+            }
+            // Clear the modes so the window server stops tracking it, so the
+            // entry leaves System Settings -> Displays rather than lingering.
+            if let settingsClass = objcClass("CGVirtualDisplaySettings"),
+               let settings = settingsClass.perform(NSSelectorFromString("new"))?
+                   .takeUnretainedValue() as! NSObject?
+            {
+                settings.perform(NSSelectorFromString("setModes:"), with: [NSObject]() as NSArray)
+                d.perform(NSSelectorFromString("applySettings:"), with: settings)
             }
         }
         display = nil
