@@ -74,9 +74,10 @@ System Settings → General → Login Items.
 
 ## Usage
 
-- **Green `LK`** in the menu bar = active. Close the lid and the display will turn off while the system keeps running.
-- **Grey `LK`** = disabled. Normal macOS sleep behavior.
-- Click the icon to toggle on/off or quit.
+- A filled **open laptop** = active. Close the lid and the display will turn off while the system keeps running.
+- A filled **closed laptop** = disabled. Normal macOS sleep behavior.
+- An outlined laptop with **`!`** = display is up but the sleep assertion failed, so the network may still drop. It retries on its own; the tooltip says which state you are in.
+- Click the menu-bar icon for Turn On/Off and Quit.
 
 LidKeeper never calls `pmset`; all of the above runs through CoreGraphics and
 Power Management APIs, so your `pmset` display-sleep setting is left alone.

@@ -178,7 +178,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pmAssertionID: UInt32 = 0
     private let pmAssertionTimeout: TimeInterval = 15
     private var pmRetryTimer: Timer?
-    private var statusMenuItem: NSMenuItem!
     private var toggleMenuItem: NSMenuItem!
 
     func applicationDidFinishLaunching(_: Notification) {
@@ -191,13 +190,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupMenuBar() {
-        statusItem = NSStatusBar.system.statusItem(withLength: 32)
+        // Sized to the title; 32pt clipped "LK" against its edges.
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         let menu = NSMenu()
-        statusMenuItem = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
-        statusMenuItem.isEnabled = false
-        menu.addItem(statusMenuItem)
-        menu.addItem(.separator())
         toggleMenuItem = NSMenuItem(title: "Turn On", action: #selector(toggleEnabled), keyEquivalent: "")
         menu.addItem(toggleMenuItem)
         menu.addItem(.separator())
@@ -206,20 +202,84 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshMenuBar() {
-        let color = isEnabled ? NSColor.systemGreen : NSColor.secondaryLabelColor
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.menuBarFont(ofSize: 0),
-            .foregroundColor: color
-        ]
-        statusItem.button?.attributedTitle = NSAttributedString(string: "LK", attributes: attrs)
+        // The menu has no status row: state shows only in this icon, so it is a
+        // state in itself rather than decoration. A template image rather than
+        // coloured text, so macOS tints it to match the bar and the neighbouring
+        // items.
+        let state: LidState
         if !isEnabled {
-            statusMenuItem.title = "⛔ Disabled"
+            state = .off
         } else if pmAssertionID == 0 {
-            statusMenuItem.title = "⚠️ Display active, sleep assertion failed"
+            state = .warning
         } else {
-            statusMenuItem.title = "✅ Virtual Display Active"
+            state = .on
         }
+        statusItem.button?.image = lidIcon(state)
+        statusItem.button?.imagePosition = .imageOnly
+        statusItem.button?.title = ""
+        statusItem.button?.toolTip = state.tooltip
         toggleMenuItem.title = isEnabled ? "Turn Off" : "Turn On"
+    }
+
+    private enum LidState {
+        case on, off, warning
+
+        var tooltip: String {
+            switch self {
+            case .on: return "LidKeeper: active"
+            case .off: return "LidKeeper: disabled"
+            case .warning: return "LidKeeper: display active, sleep assertion failed"
+            }
+        }
+    }
+
+    /// A laptop seen from the front, drawn as a template so macOS tints it like
+    /// the neighbouring menu-bar items and it survives light and dark bars.
+    /// State is carried by shape alone, since a template has no colour: open lid
+    /// = keeping the Mac awake, closed slab = letting it sleep, exclamation in
+    /// the screen = assertion failed.
+    private func lidIcon(_ state: LidState) -> NSImage {
+        let size = NSSize(width: 18, height: 17)
+        let open = state != .off
+        let image = NSImage(size: size, flipped: false) { _ in
+            NSColor.black.setStroke()
+            NSColor.black.setFill()
+            let line: CGFloat = 1.4
+
+            // Screen: an upright hollow rect when open, a low filled slab when
+            // shut — same weight either way, so the two read as one object.
+            let screen = open
+                ? NSRect(x: 3.4, y: 4.8, width: 11.2, height: 9.2)
+                : NSRect(x: 2.8, y: 6.2, width: 12.4, height: 5.4)
+            let screenPath = NSBezierPath(roundedRect: screen, xRadius: 1.8, yRadius: 1.8)
+            screenPath.lineWidth = line
+            if state == .off {
+                screenPath.fill()
+            } else {
+                // On and warning both stay hollow, so the exclamation below has
+                // something to sit in and the glyph keeps one visual weight.
+                screenPath.stroke()
+            }
+
+            // Base, so the upright screen reads as a laptop lid and not a window.
+            let base = NSBezierPath()
+            base.move(to: NSPoint(x: 1.6, y: 3.1))
+            base.line(to: NSPoint(x: 16.4, y: 3.1))
+            base.lineWidth = line + 0.1
+            base.lineCapStyle = .round
+            base.stroke()
+
+            if state == .warning {
+                // Solid exclamation inside the hollow screen.
+                NSBezierPath(roundedRect: NSRect(x: 7.9, y: 8.2, width: 2.0, height: 3.8),
+                             xRadius: 1.0, yRadius: 1.0).fill()
+                NSBezierPath(ovalIn: NSRect(x: 7.9, y: 6.4, width: 2.0, height: 1.1)).fill()
+            }
+            return true
+        }
+        // Template: macOS owns the colour, so it matches the bar in either mode.
+        image.isTemplate = true
+        return image
     }
 
     @objc private func toggleEnabled() {
