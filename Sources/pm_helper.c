@@ -1,18 +1,28 @@
 #include "pm_helper.h"
 #include <IOKit/pwr_mgt/IOPMLib.h>
 
-uint32_t pm_no_idle_sleep(const char *reason) {
+uint32_t pm_assert(enum pm_assertion_kind kind, const char *reason) {
     if (!reason) return 0;
-    IOPMAssertionID assertionID = 0;
+
+    CFStringRef type;
+    switch (kind) {
+    case PM_ASSERT_IDLE_SYSTEM_SLEEP:
+        type = kIOPMAssertPreventUserIdleSystemSleep;
+        break;
+    case PM_ASSERT_IDLE_DISPLAY_SLEEP:
+        type = kIOPMAssertPreventUserIdleDisplaySleep;
+        break;
+    default:
+        return 0;
+    }
+
     CFStringRef reasonStr = CFStringCreateWithCString(
         kCFAllocatorDefault, reason, kCFStringEncodingUTF8);
     if (!reasonStr) return 0;
 
+    IOPMAssertionID assertionID = 0;
     IOReturn ret = IOPMAssertionCreateWithName(
-        kIOPMAssertionTypeNoIdleSleep,
-        kIOPMAssertionLevelOn,
-        reasonStr,
-        &assertionID);
+        type, kIOPMAssertionLevelOn, reasonStr, &assertionID);
 
     CFRelease(reasonStr);
     return ret == kIOReturnSuccess ? assertionID : 0;

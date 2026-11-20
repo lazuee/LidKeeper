@@ -176,6 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     private let vdm = VirtualDisplayManager()
     private var pmAssertionID: UInt32 = 0
+    private var pmDisplayAssertionID: UInt32 = 0
     private let pmAssertionTimeout: TimeInterval = 15
     private var pmRetryTimer: Timer?
     private var toggleMenuItem: NSMenuItem!
@@ -209,7 +210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let state: LidState
         if !isEnabled {
             state = .off
-        } else if pmAssertionID == 0 {
+        } else if !assertionsHeld {
             state = .warning
         } else {
             state = .on
@@ -291,22 +292,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.terminate(nil)
     }
 
-    /// Acquires the NoIdleSleep assertion, retrying while the display stays up.
-    /// A failure here is not cosmetic: without the assertion the network stack
-    /// is allowed to sleep on lid close, which is the entire point of the app.
+    /// Acquires both assertions, retrying while the display stays up. A failure
+    /// is not cosmetic: the system one keeps the network stack from sleeping on
+    /// lid close, and the display one keeps the screen (and so media playback)
+    /// from stopping.
     private func acquireAssertion() {
-        guard isEnabled, pmAssertionID == 0 else { return }
-        let id = "LidKeeper active".withCString { pm_no_idle_sleep($0) }
-        if id != 0 {
+        guard isEnabled, !assertionsHeld else { return }
+
+        if pmAssertionID == 0 {
+            let id = "LidKeeper active".withCString {
+                pm_assert(PM_ASSERT_IDLE_SYSTEM_SLEEP, $0)
+            }
             pmAssertionID = id
-            NSLog("[LidKeeper] NoIdleSleep assertion created: \(id)")
+            if id != 0 {
+                NSLog("[LidKeeper] system-sleep assertion created: \(id)")
+            } else {
+                NSLog("[LidKeeper] WARNING: system-sleep assertion failed")
+            }
+        }
+
+        if pmDisplayAssertionID == 0 {
+            let id = "LidKeeper display active".withCString {
+                pm_assert(PM_ASSERT_IDLE_DISPLAY_SLEEP, $0)
+            }
+            pmDisplayAssertionID = id
+            if id != 0 {
+                NSLog("[LidKeeper] display-sleep assertion created: \(id)")
+            } else {
+                NSLog("[LidKeeper] WARNING: display-sleep assertion failed")
+            }
+        }
+
+        if assertionsHeld {
             stopRetrying()
         } else {
-            NSLog("[LidKeeper] WARNING: NoIdleSleep assertion failed; retrying in \(pmAssertionTimeout)s")
+            NSLog("[LidKeeper] retrying failed assertion(s) in \(pmAssertionTimeout)s")
             scheduleRetry()
         }
         refreshMenuBar()
     }
+
+    /// True only when both assertions are live.
+    private var assertionsHeld: Bool { pmAssertionID != 0 && pmDisplayAssertionID != 0 }
 
     private func scheduleRetry() {
         guard pmRetryTimer == nil else { return }
@@ -331,13 +358,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func disable() {
         stopRetrying()
-        if pmAssertionID != 0 {
-            let ret = pm_release_assertion(pmAssertionID)
-            NSLog("[LidKeeper] NoIdleSleep assertion released: \(ret == 0 ? "OK" : "FAIL")")
-            pmAssertionID = 0
-        }
+        releaseAssertions()
         vdm.destroy()
         isEnabled = false
+    }
+
+    private func releaseAssertions() {
+        if pmAssertionID != 0 {
+            let ret = pm_release_assertion(pmAssertionID)
+            NSLog("[LidKeeper] system-sleep assertion released: \(ret == 0 ? "OK" : "FAIL")")
+            pmAssertionID = 0
+        }
+        if pmDisplayAssertionID != 0 {
+            let ret = pm_release_assertion(pmDisplayAssertionID)
+            NSLog("[LidKeeper] display-sleep assertion released: \(ret == 0 ? "OK" : "FAIL")")
+            pmDisplayAssertionID = 0
+        }
     }
 
     private func showAlert(_ title: String, _ message: String) {

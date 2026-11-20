@@ -10,9 +10,15 @@ LidKeeper attaches a private `CGVirtualDisplay` and mirrors it to the built-in
 display. macOS treats that as an external monitor and enters native clamshell
 mode, so closing the lid turns the screen off instead of forcing a sleep.
 
-Alongside the display it holds an `IOPMAssertionTypeNoIdleSleep` assertion so
+Alongside the display it holds two assertions: `PreventUserIdleSystemSleep` so
 macOS does not power down the WiFi/network hardware when the lid magnet sensor
-trips. If the assertion cannot be acquired, the menu bar reports
+trips, and `PreventUserIdleDisplaySleep` so the display stays awake and audio
+and video keep playing instead of pausing on display sleep.
+
+(Both replace `IOPMAssertionTypeNoIdleSleep` and its display twin, deprecated
+since 10.7. They are the same assertions `caffeinate -i` and `-d` take.)
+
+If either assertion cannot be acquired, the menu bar reports
 `⚠️ Display active, sleep assertion failed` and retries periodically while the
 display is on.
 
@@ -23,17 +29,20 @@ disappears from System Settings → Displays instead of accumulating.
 
 ## How this differs from `caffeinate`
 
-`caffeinate -i -m -s` asserts three things separately. LidKeeper asserts only
-idle system sleep, and lets clamshell mode cover the rest — that is what keeps
-the screen off while the machine stays up.
+`caffeinate -i -m -s` asserts three things separately. LidKeeper asserts idle
+system sleep and idle display sleep, and lets clamshell mode cover the rest —
+that is what keeps the screen off while the machine stays up.
 
-- Nothing polls `pmset displaysleepnow`; the screen goes off because clamshell
-  mode blanks it, not because a timer forces it.
 - Disk sleep (`-m`) and system sleep (`-s`) are not asserted individually.
 
 Both are deliberate rather than missing: in testing, a closed lid held a live
-WiFi link for several minutes while `pmset` reported sleep continuously
-prevented for the whole run.
+WiFi link and uninterrupted audio for ~9 minutes while `pmset` reported both
+sleep and display sleep continuously prevented.
+
+Note the display assertion is not lid-scoped: while LidKeeper is on, the screen
+also stops idling to sleep with the lid open. That is what keeps media playing,
+and it is why the display no longer blanks on a timer. It still blanks on lid
+close, because clamshell mode does that.
 
 ## Requirements
 
@@ -76,7 +85,7 @@ System Settings → General → Login Items.
 
 - A filled **open laptop** = active. Close the lid and the display will turn off while the system keeps running.
 - A filled **closed laptop** = disabled. Normal macOS sleep behavior.
-- An outlined laptop with **`!`** = display is up but the sleep assertion failed, so the network may still drop. It retries on its own; the tooltip says which state you are in.
+- An outlined laptop with **`!`** = display is up but an assertion failed, so the network or playback may still stop. It retries on its own; the tooltip says which state you are in.
 - Click the menu-bar icon for Turn On/Off and Quit.
 
 LidKeeper never calls `pmset`; all of the above runs through CoreGraphics and
